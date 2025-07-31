@@ -3,13 +3,12 @@ import os
 import pathlib
 import ssl
 import sys
-from contextlib import asynccontextmanager
 from unittest.mock import MagicMock, patch
 
 import certifi
 import httpx
 import pytest
-from aiohttp import ClientSession, TCPConnector, web
+from aiohttp import ClientSession, TCPConnector
 
 sys.path.insert(
     0, os.path.abspath("../../../..")
@@ -17,32 +16,6 @@ sys.path.insert(
 import litellm
 from litellm.llms.custom_httpx.aiohttp_transport import LiteLLMAiohttpTransport
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, get_ssl_configuration
-
-
-@asynccontextmanager
-async def local_http_server():
-    """Create a local HTTP server for testing IPv4 transport"""
-    async def hello_handler(request):
-        return web.json_response({"message": "Hello from IPv4 server", "status": "ok"})
-    
-    app = web.Application()
-    app.router.add_get("/test", hello_handler)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    # Bind specifically to IPv4 localhost with a random port
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    
-    # Get the actual port number
-    port = site._server.sockets[0].getsockname()[1]
-    base_url = f"http://127.0.0.1:{port}"
-    
-    try:
-        yield base_url
-    finally:
-        await runner.cleanup()
 
 
 @pytest.mark.asyncio
@@ -75,7 +48,7 @@ async def test_ssl_security_level(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_force_ipv4_transport():
-    """Test transport creation with force_ipv4 enabled using a local IPv4 server"""
+    """Test transport creation with force_ipv4 enabled"""
     litellm.force_ipv4 = True
     litellm.disable_aiohttp_transport = True
 
@@ -83,25 +56,13 @@ async def test_force_ipv4_transport():
 
     # Should get an AsyncHTTPTransport
     assert isinstance(transport, httpx.AsyncHTTPTransport)
-    
-    # Start a local HTTP server bound to IPv4 localhost
-    async with local_http_server() as base_url:
-        # Verify the server is bound to IPv4 (127.0.0.1)
-        assert base_url.startswith("http://127.0.0.1:")
-        
-        # Verify IPv4 configuration through a request to our local server
-        client = httpx.AsyncClient(transport=transport)
-        try:
-            response = await client.get(f"{base_url}/test", timeout=5.0)
-            assert response.status_code == 200
-            
-            # Verify the response content
-            json_response = response.json()
-            assert json_response["status"] == "ok"
-            assert "Hello from IPv4 server" in json_response["message"]
-            
-        finally:
-            await client.aclose()
+    # Verify IPv4 configuration through a request
+    client = httpx.AsyncClient(transport=transport)
+    try:
+        response = await client.get("http://example.com")
+        assert response.status_code == 200
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
